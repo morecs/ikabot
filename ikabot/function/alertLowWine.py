@@ -4,6 +4,7 @@
 import gettext
 import re
 import time
+import datetime
 import traceback
 from decimal import *
 
@@ -76,10 +77,18 @@ def do_it(session, hours):
     session : ikabot.web.session.Session
     hours : int
     """
-
     was_alerted = {}
+    message_log = []
+    routes = []  # Store all routes for batch execution
+    last_reset_time = datetime.datetime.now()
     while True:
-        # getIdsOfCities is called on a loop because the amount of cities may change
+        
+        current_time = datetime.datetime.now()
+        time_elapsed = (current_time - last_reset_time).total_seconds()
+        if time_elapsed >= 12 * 60 * 60:  # 12 h in seconds
+            was_alerted = {cityId: False for cityId in was_alerted}  # alert reset
+            last_reset_time = current_time  # time of the reset
+            
         ids, cities = getIdsOfCities(session)
 
         for cityId in cities:
