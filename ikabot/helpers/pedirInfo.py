@@ -197,8 +197,8 @@ def chooseForeignCity(session):
     for city in island["cities"]:
         if (
             city["type"] == "city"
-            and city["state"] == ""
             and city["Name"] != session.username
+            and (city["state"] == "" or city["state"] == "inactive")
         ):
             i += 1
             num = " " + str(i) if i < 10 else str(i)
@@ -320,6 +320,78 @@ def getIslandsIds(session):
         island_id = city["islandId"]
         islands_ids.add(island_id)
     return list(islands_ids)
+
+
+def chooseEnemyCity(session):
+    """Prompts the user to select an enemy city for attacking. Similar to chooseForeignCity but only shows cities that can be attacked.
+    
+    Parameters
+    ----------
+    session : ikabot.web.session.Session
+        Session object
+
+    Returns
+    -------
+    city : City
+        a city object representing the enemy city chosen
+    """
+    banner()
+    x = read(msg="coordinate x:", digit=True)
+    y = read(msg="coordinate y:", digit=True)
+    print("")
+    url = "view=worldmap_iso&islandX={}&islandY={}&oldBackgroundView=island&islandWorldviewScale=1".format(
+        x, y
+    )
+    html = session.get(url)
+    try:
+        islands_json = re.search(r"jsonData = \'(.*?)\';", html).group(1)
+        islands_json = json.loads(islands_json, strict=False)
+        island_id = islands_json["data"][str(x)][str(y)][0]
+    except Exception:
+        print("Incorrect coordinates")
+        enter()
+        banner()
+        return chooseEnemyCity(session)
+        
+    html = session.get(island_url + island_id)
+    island = getIsland(html)
+
+    i = 0
+    city_options = []
+    for city in island["cities"]:
+        # Only show cities that we can attack (not ours, not abandoned)
+        if (
+            city["type"] == "city" 
+            and city["Name"] != session.username
+            and (city["state"] == "" or city["state"] == "inactive")
+            and city.get("Name") is not None  # Must have an owner
+        ):
+            i += 1
+            num = " " + str(i) if i < 10 else str(i)
+            state_tag = " [INACTIVE]" if city["state"] == "inactive" else ""
+            print(
+                "{: >2}: {: >{max_city_name_length}} ({}){}"
+                .format(
+                    num,
+                    decodeUnicodeEscape(city["name"]),
+                    decodeUnicodeEscape(city["Name"]),
+                    state_tag,
+                    max_city_name_length=MAXIMUM_CITY_NAME_LENGTH,
+                )
+            )
+            city_options.append(city)
+            
+    if i == 0:
+        print("There are no cities that can be attacked on this island")
+        enter()
+        return chooseEnemyCity(session)
+        
+    selected_city_index = read(min=1, max=i)
+    city = city_options[selected_city_index - 1]
+    city["islandId"] = island["id"]
+    city["cityName"] = decodeUnicodeEscape(city["name"])
+    city["isOwnCity"] = False
+    return city
 
 
 def getShipCapacity(session):
