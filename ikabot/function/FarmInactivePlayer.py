@@ -236,12 +236,29 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
             }
             military_data = session.post(params=military_view_params)
 
-            # Extract actionRequest token from the HTML (response is JSON, but actionRequest is in the HTML)
-            # We'll fetch the city view HTML to get the token
-            html = session.get()
-            action_request_match = re.search(r'actionRequest"\s*:\s*"([a-f0-9]+)"', html)
+            # Ensure we are viewing the source city page to get a valid actionRequest token
+            try:
+                city_view_html = session.get(params={
+                    'view': 'city',
+                    'cityId': source_city['id'],
+                    'backgroundView': 'city',
+                    'ajax': 1
+                })
+            except Exception:
+                # fallback to a generic GET if the param'd get fails
+                city_view_html = session.get()
+
+            # Extract actionRequest token from the city view HTML
+            action_request_match = re.search(r'actionRequest"\s*:\s*"([a-f0-9]+)"', city_view_html)
             if not action_request_match:
-                action_request_match = re.search(r'actionRequest=([a-f0-9]+)', html)
+                action_request_match = re.search(r'actionRequest=([a-f0-9]+)', city_view_html)
+            if not action_request_match:
+                # final fallback to any page content
+                fallback_html = session.get()
+                action_request_match = re.search(r'actionRequest"\s*:\s*"([a-f0-9]+)"', fallback_html)
+                if not action_request_match:
+                    action_request_match = re.search(r'actionRequest=([a-f0-9]+)', fallback_html)
+
             if action_request_match:
                 action_request = action_request_match.group(1)
             else:
@@ -254,6 +271,8 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
                 'actionRequest': action_request,
                 'islandId': target_city['islandId'],
                 'destinationCityId': target_city['id'],
+                'currentCityId': source_city['id'],
+                'cityId': source_city['id'],
                 'barbarianVillage': 0,
                 'backgroundView': 'island',
                 'currentIslandId': target_city['islandId'],
