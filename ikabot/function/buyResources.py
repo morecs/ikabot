@@ -18,7 +18,8 @@ from ikabot.helpers.planRoutes import waitForArrival
 from ikabot.helpers.process import set_child_mode
 from ikabot.helpers.resources import *
 from ikabot.helpers.signals import setInfoSignal
-from ikabot.helpers.varios import addThousandSeparator
+from ikabot.helpers.varios import addThousandSeparator, getDateTime
+from ikabot.helpers.pedirInfo import getShipCapacity
 
 
 
@@ -89,7 +90,7 @@ def getOffers(session, city):
             "jugadorAComprar": hit[1],
             "bienesXminuto": int(hit[2]),
             "amountAvailable": int(
-                hit[3].replace(",", "").replace(".", "").replace("<", "")
+                hit[3].replace(",", "").replace(".", "").replace("<", "").replace(" ", "")
             ),
             "tipo": hit[4],
             "precio": int(hit[5]),
@@ -279,7 +280,7 @@ def buyResources(session, event, stdin_fd, predetermined_input):
         session.logout()
 
 
-def buy(session, city, offer, amount_to_buy, ships_available):
+def buy(session, city, offer, amount_to_buy, ships_available, ship_capacity):
     """
     Parameters
     ----------
@@ -288,7 +289,7 @@ def buy(session, city, offer, amount_to_buy, ships_available):
     offer : dict
     amount_to_buy : int
     """
-    ships = int(math.ceil((Decimal(amount_to_buy) / Decimal(500))))
+    ships = int(math.ceil((Decimal(amount_to_buy) / Decimal(ship_capacity))))
     data_dict = {
         "action": "transportOperations",
         "function": "buyGoodsAtAnotherBranchOffice",
@@ -345,6 +346,10 @@ def buy(session, city, offer, amount_to_buy, ships_available):
         offer["jugadorAComprar"],
     )
     sendToBotDebug(session, msg, debugON_buyResources)
+    resource_name = offer['tipo']
+    session.setStatus(
+        f"Bought {addThousandSeparator(amount_to_buy)} {resource_name} for {offer['precio']} gold from {offer['ciudadDestino']} ({offer['jugadorAComprar']}) ---> {city['name']} | {getDateTime()}"
+    )
 
 
 def do_it(session, city, offers, amount_to_buy):
@@ -356,19 +361,19 @@ def do_it(session, city, offers, amount_to_buy):
     offers : list[dict]
     amount_to_buy : int
     """
+    ship_capacity, freighter_capacity = getShipCapacity(session)
     while True:
         for offer in offers:
             if amount_to_buy == 0:
                 return
             if offer["amountAvailable"] == 0:
                 continue
-
             ships_available = waitForArrival(session)
-            storageCapacity = ships_available * 500
+            storageCapacity = ships_available * ship_capacity
             buy_amount = min(amount_to_buy, storageCapacity, offer["amountAvailable"])
 
             amount_to_buy -= buy_amount
             offer["amountAvailable"] -= buy_amount
-            buy(session, city, offer, buy_amount, ships_available)
+            buy(session, city, offer, buy_amount, ships_available, ship_capacity)
             # start from the beginning again, so that we always buy from the cheapest offers fisrt
             break
