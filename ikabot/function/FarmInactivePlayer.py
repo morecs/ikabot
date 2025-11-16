@@ -413,7 +413,7 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
                 attack_details.append(f"{unit_name}: {amount}")
             resources_gained = plundered_resources
             resource_details = ', '.join([f"{res}: {amt}" for res, amt in resources_gained.items() if amt > 0]) if plundered_resources else 'Unknown (not fetched)'
-            # Short, single-line status good for PID table display
+            # Update status in PID table
             try:
                 short_status = (
                     f'AutoFarm: {source_city["cityName"]} -> {target_city["cityName"]} '
@@ -421,16 +421,25 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
                 )
             except Exception:
                 short_status = f'AutoFarm: trip {trip + 1}/{trips} plunder:{trip_total} total:{total_farmed}'
-            setInfoSignal(session, short_status)
+            process_entry = {
+                "pid": os.getpid(),
+                "action": AutoFarmInactive.__name__,
+                "date": time.time(),
+                "status": short_status
+            }
+            updateProcessList(session, programprocesslist=[process_entry])
+
             if trip < trips - 1:
                 if trip_total == 0:
                     # Do not abort the whole operation on a single empty report - continue to next scheduled attack
-                    setInfoSignal(session, f'No resources plundered on trip {trip + 1}, continuing to next trip')
+                    process_entry["status"] = f'No resources plundered on trip {trip + 1}, continuing to next trip'
+                    updateProcessList(session, programprocesslist=[process_entry])
                 # wait a random time between 60s (min) and the user-selected wait_time (max)
                 wait_seconds = random.randint(60, wait_time) if wait_time >= 60 else 60
                 next_activity = time.time() + wait_seconds
                 next_ts = time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime(next_activity))
-                setInfoSignal(session, f'Waiting {wait_seconds}s until {next_ts} (trip {trip + 1}/{trips})')
+                process_entry["status"] = f'Last attack @{time.strftime("%Y-%m-%d_%H-%M-%S")}, next @{next_ts} | Trip {trip + 1}/{trips}'
+                updateProcessList(session, programprocesslist=[process_entry])
                 time.sleep(wait_seconds)
         except Exception as e:
             traceback.print_exc()
