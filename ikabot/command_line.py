@@ -46,6 +46,8 @@ from ikabot.function.activateShrine import activateShrine
 from ikabot.helpers.botComm import telegramDataIsValid, updateTelegramData
 from ikabot.helpers.gui import *
 from ikabot.helpers.pedirInfo import read
+from ikabot.function.modifyProduction import modifyProduction
+from ikabot.function.modifyWineConsumption import modifyWineConsumption
 from ikabot.helpers.process import updateProcessList
 from ikabot.web.session import *
 from ikabot.function.modifyProduction import modifyProduction
@@ -112,6 +114,20 @@ def menu(session, checkUpdate=True):
         ]
         print("")
 
+    def production_or_wine(session, event, stdin_fd, predetermined_input):
+        from ikabot.helpers.gui import banner
+        banner()
+        print("(0) Back")
+        print("(1) Set Production of Saw mill / Luxury good")
+        print("(2) Set wine consumption in taverns")
+        choice = read(min=0, max=2, digit=True)
+        if choice == 0:
+            return
+        elif choice == 1:
+            modifyProduction(session, event, stdin_fd, predetermined_input)
+        elif choice == 2:
+            modifyWineConsumption(session, event, stdin_fd, predetermined_input)
+
     menu_actions = {
         1: constructionList,
         2: sendResources,
@@ -148,7 +164,8 @@ def menu(session, checkUpdate=True):
         2107: importExportCookie,
         2108: loadCustomModule,
         22: consolidateResources,
-        23: modifyProduction
+    23: production_or_wine,
+    24: modifyWineConsumption
     }
 
     print("(0)  Exit")
@@ -174,7 +191,7 @@ def menu(session, checkUpdate=True):
     print("(20) Dump / Monitor world")
     print("(21) Options / Settings")
     print("(22) Consolidate resources")
-    print("(23) Set Production of Saw mill / Luxury good")
+    print("(23) Set Production / Wine consumption")
 
     total_options = len(menu_actions) + 1
     selected = read(min=0, max=total_options, digit=True, empty=True)
