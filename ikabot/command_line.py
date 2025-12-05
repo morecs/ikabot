@@ -164,8 +164,9 @@ def menu(session, checkUpdate=True):
         2107: importExportCookie,
         2108: loadCustomModule,
         22: consolidateResources,
-    23: production_or_wine,
-    24: modifyWineConsumption
+        23: production_or_wine,
+        2301: modifyProduction,
+        2302: modifyWineConsumption
     }
 
     print("(0)  Exit")
