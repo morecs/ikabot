@@ -80,4 +80,4 @@ def modifyWineConsumption(session, event, stdin_fd, predetermined_input):
 		html_after = session.get(city_url + city_id)
 		actual_consumption = getWineConsumptionPerHour(html_after)
 		print(f"In {city['name']} tavern, wine consumption is now {actual_consumption} wine per hour.")
-	input("Press Enter to continue...")
+	input("\nAll wine consumption settings have been applied!")
