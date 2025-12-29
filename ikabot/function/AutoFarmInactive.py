@@ -70,21 +70,23 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
         source_city = chooseCity(session)  # Show our cities
 
 
-        # Select multiple target cities
-        target_cities = []
+        # Select multiple target cities, with custom trips per target
+        target_plans = []  # list of tuples (city, trips_for_city)
         while True:
             print('\nEnter coordinates and select a city to attack:')
             city = chooseEnemyCity(session)
             print(f'Selected: {city["cityName"]} (Player: {city.get("Name", "Unknown")})')
-            target_cities.append(city)
+            trips_for_city = read(msg='How many attacks for this target? (max 100): ', min=1, max=100, digit=True)
+            target_plans.append((city, trips_for_city))
             print('Add another target city? [y/N]')
             add_more = read(values=["y", "Y", "n", "N", ""])
             if add_more.lower() != "y":
                 break
 
         print(f'\nAttacking from: {source_city["cityName"]}')
-        for idx, city in enumerate(target_cities, 1):
-            print(f'Target {idx}: {city["cityName"]} (Player: {city.get("Name", "Unknown")})')
+        for idx, plan in enumerate(target_plans, 1):
+            city, trips_for_city = plan
+            print(f'Target {idx}: {city["cityName"]} (Player: {city.get("Name", "Unknown")}) | attacks: {trips_for_city}')
 
         print('\nIs this correct? [Y/n]')
         rta = read(values=["y", "Y", "n", "N", ""])
@@ -127,10 +129,6 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
         ship_capacity = getShipCapacity(session)
         print(f'\nEach ship can carry {ship_capacity} resources')
 
-        # Get number of trips
-        print('\nHow many attacks do you want to make? (max 100)')
-        trips = read(min=1, max=100, digit=True)
-
         # Get wait time between trips
         print('\nHow many seconds to wait between attacks? (min 60)')
         wait_time = read(min=60, max=3600, digit=True)
@@ -152,10 +150,11 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
             updateProcessList(session, programprocesslist=[process_entry])
         except Exception:
             pass
-        # Show concise PID-table-friendly status: source -> targets, trips and ships per trip
+        # Show concise PID-table-friendly status: source -> targets, trips per target, ships per trip
         try:
-            target_names = ', '.join([city["cityName"] for city in target_cities])
-            pid_status = f'AutoFarmInactive: {source_city["cityName"]} -> {target_names} | trips {trips} | ships/trip {cargo_ships}'
+            target_summaries = [f"{city['cityName']}({trips}x)" for city, trips in target_plans]
+            target_names = ', '.join(target_summaries)
+            pid_status = f'AutoFarmInactive: {source_city["cityName"]} -> {target_names} | ships/trip {cargo_ships}'
         except Exception:
             pid_status = 'AutoFarmInactive: running'
         setInfoSignal(session, pid_status)
@@ -176,8 +175,10 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
                         time.sleep(30)
 
             total_farmed = 0
-            for idx, target_city in enumerate(target_cities, 1):
-                setInfoSignal(session, f'Starting attacks on target {idx}/{len(target_cities)}: {target_city["cityName"]}')
+            total_attacks = 0
+            for idx, plan in enumerate(target_plans, 1):
+                target_city, trips_for_city = plan
+                setInfoSignal(session, f'Starting attacks on target {idx}/{len(target_plans)}: {target_city["cityName"]} ({trips_for_city} attacks)')
                 # Check cargo ships availability before attacking each target
                 if cargo_ships and cargo_ships > 0:
                     ships_now = getAvailableShips(session)
@@ -188,9 +189,10 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
                             if ships_now >= cargo_ships:
                                 break
                             time.sleep(15)
-                farmed = _do_farming(session, source_city, target_city, attack_units, total_units, cargo_ships, trips, wait_time)
+                farmed = _do_farming(session, source_city, target_city, attack_units, total_units, cargo_ships, trips_for_city, wait_time)
                 total_farmed += farmed
-            print(f'\nTotal resources farmed from all targets: {total_farmed}')
+                total_attacks += trips_for_city
+            print(f'\nTotal resources farmed from all targets: {total_farmed} (attacks: {total_attacks})')
         except Exception as e:
             # report error to signals and bot
             setInfoSignal(session, f'Error during farming: {str(e)}')
