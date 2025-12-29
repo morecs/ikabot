@@ -20,7 +20,7 @@ from ikabot.helpers.planRoutes import waitForArrival
 from ikabot.helpers.process import set_child_mode, updateProcessList
 from ikabot.helpers.signals import setInfoSignal
 from ikabot.helpers.varios import *
-from ikabot.helpers.pedirInfo import getShipCapacity, chooseEnemyCity
+from ikabot.helpers.pedirInfo import chooseEnemyCity
 from ikabot.web.session import Session
 from ikabot.function.attackBarbarians import (
     get_units,
@@ -69,13 +69,22 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
         print('\nSelect the city you want to attack from:')
         source_city = chooseCity(session)  # Show our cities
 
-        # Get the target city (the inactive player's city)
-        print('\nEnter coordinates and select a city to attack:')
-        target_city = chooseEnemyCity(session)  # Use the new function specifically for selecting enemy cities
 
-        # Verify the selected cities
+        # Select multiple target cities
+        target_cities = []
+        while True:
+            print('\nEnter coordinates and select a city to attack:')
+            city = chooseEnemyCity(session)
+            print(f'Selected: {city["cityName"]} (Player: {city.get("Name", "Unknown")})')
+            target_cities.append(city)
+            print('Add another target city? [y/N]')
+            add_more = read(values=["y", "Y", "n", "N", ""])
+            if add_more.lower() != "y":
+                break
+
         print(f'\nAttacking from: {source_city["cityName"]}')
-        print(f'Target city: {target_city["cityName"]} (Player: {target_city.get("Name", "Unknown")})')
+        for idx, city in enumerate(target_cities, 1):
+            print(f'Target {idx}: {city["cityName"]} (Player: {city.get("Name", "Unknown")})')
 
         print('\nIs this correct? [Y/n]')
         rta = read(values=["y", "Y", "n", "N", ""])
@@ -117,7 +126,6 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
         # Get ship capacity
         ship_capacity = getShipCapacity(session)
         print(f'\nEach ship can carry {ship_capacity} resources')
-        print(f'Total cargo capacity per trip: {cargo_ships * ship_capacity}')
 
         # Get number of trips
         print('\nHow many attacks do you want to make? (max 100)')
@@ -144,9 +152,10 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
             updateProcessList(session, programprocesslist=[process_entry])
         except Exception:
             pass
-        # Show concise PID-table-friendly status: source -> target, trips and ships per trip
+        # Show concise PID-table-friendly status: source -> targets, trips and ships per trip
         try:
-            pid_status = f'AutoFarmInactive: {source_city["cityName"]} -> {target_city["cityName"]} | trips {trips} | ships/trip {cargo_ships}'
+            target_names = ', '.join([city["cityName"] for city in target_cities])
+            pid_status = f'AutoFarmInactive: {source_city["cityName"]} -> {target_names} | trips {trips} | ships/trip {cargo_ships}'
         except Exception:
             pid_status = 'AutoFarmInactive: running'
         setInfoSignal(session, pid_status)
@@ -166,7 +175,22 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
                         setInfoSignal(session, f'{ships_now} transports returned, still waiting for {cargo_ships - ships_now} more...')
                         time.sleep(30)
 
-            total_farmed = _do_farming(session, source_city, target_city, attack_units, total_units, cargo_ships, trips, wait_time)
+            total_farmed = 0
+            for idx, target_city in enumerate(target_cities, 1):
+                setInfoSignal(session, f'Starting attacks on target {idx}/{len(target_cities)}: {target_city["cityName"]}')
+                # Check cargo ships availability before attacking each target
+                if cargo_ships and cargo_ships > 0:
+                    ships_now = getAvailableShips(session)
+                    if ships_now < cargo_ships:
+                        setInfoSignal(session, f'Waiting for transports to return before target {idx} (need {cargo_ships}, have {ships_now})')
+                        while True:
+                            ships_now = waitForArrival(session)
+                            if ships_now >= cargo_ships:
+                                break
+                            time.sleep(15)
+                farmed = _do_farming(session, source_city, target_city, attack_units, total_units, cargo_ships, trips, wait_time)
+                total_farmed += farmed
+            print(f'\nTotal resources farmed from all targets: {total_farmed}')
         except Exception as e:
             # report error to signals and bot
             setInfoSignal(session, f'Error during farming: {str(e)}')
@@ -188,7 +212,30 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
 
 def _do_farming(session, source_city, target_city, attack_units, total_units, cargo_ships, trips, wait_time):
     total_farmed = 0
-    
+    def get_last_plundered_resources(session, source_city_id, target_city_id):
+        """Search for the last plunder report for target_city_id and extract plundered resources."""
+        try:
+            military_view_params = {
+                'view': 'militaryAdvisor',
+                'oldView': 'city',
+                'backgroundView': 'city',
+                'currentCityId': source_city_id,
+                'templateView': 'militaryAdvisor',
+                'ajax': 1
+            }
+            for _ in range(4):
+                military_data = session.post(params=military_view_params)
+                military_data = json.loads(military_data, strict=False)
+                reports = military_data[1][1][2]['viewScriptParams']['militaryAndFleetMovements']
+                for report in reports:
+                    mission = report.get('event', {}).get('mission')
+                    if (mission == 'plunder' or str(mission) == 'plunder') and report['target']['cityId'] == target_city_id:
+                        return report.get('cargo', {})
+                time.sleep(3)
+        except Exception:
+            pass
+        return {}
+
     for trip in range(trips):
         try:
             # ...existing code for a single trip...
@@ -286,18 +333,31 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
                 plunder_action[f'cargo_army_{unit_id}_upkeep'] = unit_upkeep[unit_id]
 
             ships_available = waitForArrival(session)
-            if ships_available < cargo_ships:
-                print(f"\nWaiting for ships to return... (need {cargo_ships}, have {ships_available})")
-                continue
 
             total_cargo = cargo_ships * getShipCapacity(session)
 
-            plunder_result = session.post(params=plunder_action)
-            plunder_result = json.loads(plunder_result, strict=False)
+            # Send attack with retry logic
+            plunder_result = None
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    plunder_response = session.post(params=plunder_action)
+                    plunder_result = json.loads(plunder_response, strict=False)
+                    if 'error' not in plunder_result:
+                        break
+                    elif attempt < max_retries - 1:
+                        setInfoSignal(session, f'Attack error (attempt {attempt + 1}/{max_retries}): {plunder_result.get("error", "Unknown")}. Retrying...')
+                        time.sleep(5)
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        setInfoSignal(session, f'Attack send failed (attempt {attempt + 1}/{max_retries}): {str(e)}. Retrying...')
+                        time.sleep(5)
+                    else:
+                        plunder_result = {'error': str(e)}
 
-            if 'error' in plunder_result:
-                print(f"\nError sending attack: {plunder_result['error']}")
-                break
+            if plunder_result and 'error' in plunder_result:
+                setInfoSignal(session, f'Attack failed after {max_retries} attempts: {plunder_result.get("error", "Unknown")}')
+                continue  # Continue to next trip instead of breaking
 
             attack_start_time = time.time()
             setInfoSignal(session, 'Waiting for battle to complete and resources to be loaded...')
@@ -357,54 +417,7 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
                     break
                 time.sleep(3)
 
-            military_view_params = {
-                'view': 'militaryAdvisor',
-                'oldView': 'city',
-                'backgroundView': 'city',
-                'currentCityId': source_city['id'],
-                'templateView': 'militaryAdvisor',
-                'ajax': 1
-            }
-            military_data = session.post(params=military_view_params)
-            military_data = json.loads(military_data, strict=False)
-            plundered_resources = {}
-            try:
-                reports = military_data[1][1][2]['viewScriptParams']['militaryAndFleetMovements']
-                for report in reports:
-                    try:
-                        mission = report['event'].get('mission', report['event'].get('missionType', None))
-                    except Exception:
-                        mission = report.get('event', {}).get('mission')
-                    # mission may be numeric or string; accept either 'plunder' or known numeric code for plunder (if any)
-                    if (mission == 'plunder' or str(mission) == 'plunder' or str(mission) == 'plunder') and report['target']['cityId'] == target_city['id']:
-                        plundered_resources = report.get('cargo', {})
-                        break
-            except Exception:
-                # failed to parse reports - we'll try a few more times below
-                plundered_resources = {}
-
-            # If we didn't find the plunder report yet, try a few quick retries (reports may take a moment to appear)
-            retries = 3
-            retry_delay = 5
-            attempt = 0
-            while not plundered_resources and attempt < retries:
-                attempt += 1
-                time.sleep(retry_delay)
-                try:
-                    military_data = session.post(params=military_view_params)
-                    military_data = json.loads(military_data, strict=False)
-                    reports = military_data[1][1][2]['viewScriptParams']['militaryAndFleetMovements']
-                    for report in reports:
-                        try:
-                            mission = report['event'].get('mission', report['event'].get('missionType', None))
-                        except Exception:
-                            mission = report.get('event', {}).get('mission')
-                        if (mission == 'plunder' or str(mission) == 'plunder') and report['target']['cityId'] == target_city['id']:
-                            plundered_resources = report.get('cargo', {})
-                            break
-                except Exception:
-                    continue
-
+            plundered_resources = get_last_plundered_resources(session, source_city['id'], target_city['id'])
             trip_total = sum(plundered_resources.values()) if plundered_resources else 0
             total_farmed += trip_total
             attack_details = []
