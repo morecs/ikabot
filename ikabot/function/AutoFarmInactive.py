@@ -50,6 +50,50 @@ unit_upkeep = {
     '315': 1,   # Spearman
 }
 
+def _ensure_current_city(session, city_id):
+    """Ensure the `currentCityId` in session is set to the given `city_id`.
+    Fetches `actionRequest` token and posts the `headerCity.changeCurrentCity` action if needed.
+
+    This guards against the user or other processes switching the current city between attacks.
+    """
+    try:
+        html = session.get()
+        # Detect current city id
+        m_city = re.search(r"currentCityId:\s*(\d+),", html)
+        current_id = m_city.group(1) if m_city else None
+        if str(current_id) == str(city_id):
+            return  # already on the correct city
+
+        # Find an actionRequest token
+        m_token = re.search(r'actionRequest"\s*:\s*"([a-f0-9]+)"', html)
+        if not m_token:
+            m_token = re.search(r'actionRequest=([a-f0-9]+)', html)
+        if not m_token:
+            # Fallback: request city view to obtain token
+            city_view_html = session.get(params={
+                'view': 'city',
+                'cityId': city_id,
+                'backgroundView': 'city',
+                'ajax': 1
+            })
+            m_token = re.search(r'actionRequest"\s*:\s*"([a-f0-9]+)"', city_view_html) or re.search(r'actionRequest=([a-f0-9]+)', city_view_html)
+        action_request = m_token.group(1) if m_token else ''
+
+        # Switch current city if we have a token
+        session.post(params={
+            'action': 'headerCity',
+            'function': 'changeCurrentCity',
+            'actionRequest': action_request,
+            'cityId': city_id,
+            'backgroundView': 'city',
+            'currentCityId': city_id,
+            'templateView': 'city',
+            'ajax': 1
+        })
+    except Exception:
+        # Non-fatal: in worst case the attack call may fail, and retry logic will handle it
+        pass
+
 def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
     """
     Parameters
@@ -179,6 +223,8 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
             for idx, plan in enumerate(target_plans, 1):
                 target_city, trips_for_city = plan
                 setInfoSignal(session, f'Starting attacks on target {idx}/{len(target_plans)}: {target_city["cityName"]} ({trips_for_city} attacks)')
+                # Ensure current city is the selected source before this target's batch
+                _ensure_current_city(session, source_city['id'])
                 # Check cargo ships availability before attacking each target
                 if cargo_ships and cargo_ships > 0:
                     ships_now = getAvailableShips(session)
@@ -240,6 +286,8 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
 
     for trip in range(trips):
         try:
+            # Ensure current city is correct before each trip
+            _ensure_current_city(session, source_city['id'])
             # ...existing code for a single trip...
             # First get the military view to get the action request token
             # First get the military view which will also give us an action request token
