@@ -52,11 +52,27 @@ def send_upgrade_request(session, city_id, position, unit_id, upgrade_type, acti
         "ajax": "1"
     }
     try:
-        session.post(params=payload)
-        return True
+        resp = session.post(params=payload)
+        # Normalize response text for simple checks. session.post may return raw text or a requests.Response
+        try:
+            resp_text = resp if isinstance(resp, str) else resp.text
+        except Exception:
+            resp_text = str(resp)
+
+        low = resp_text.lower()
+        # Detect common failure messages related to insufficient resources.
+        if "not enough" in low or "insufficient" in low or "not enough resources" in low:
+            return False, "insufficient_resources"
+
+        # If we see an explicit error keyword, return a generic failure so caller can retry or abort.
+        if "error" in low or "failed" in low or "exception" in low:
+            return False, "server_error"
+
+        # Otherwise assume success
+        return True, None
     except Exception as e:
         session.setStatus(f"Failed to upgrade {unit_id} ({upgrade_type})")
-        return False
+        return False, "exception"
 
 def wait_for_upgrade_completion(session, city_id, position, tab):
     while True:
@@ -99,8 +115,17 @@ def execute_sequential_upgrades(session, city_id, position, tab, tasks):
 
         task = tasks.pop(0)
         session.setStatus(f"Upgrading {task['unit']} ({task['type']}) to level {task['to']}")
-        success = send_upgrade_request(session, city_id, position, task['unitId'], task['upgradeType'], action_request, tab)
+        success, error = send_upgrade_request(session, city_id, position, task['unitId'], task['upgradeType'], action_request, tab)
         if not success:
+            # If the failure is because of insufficient resources, stop and notify via Telegram bot.
+            if error == "insufficient_resources":
+                session.setStatus("Upgrade aborted: insufficient resources")
+                try:
+                    sendToBot(session, f"Upgrade aborted in city {city_id}: insufficient resources for {task['unit']} ({task['type']}).")
+                except Exception:
+                    session.setStatus("Failed to send Telegram notification")
+                return
+            # For transient server errors, requeue and retry after a short delay
             tasks.insert(0, task)
             time.sleep(60)
 
