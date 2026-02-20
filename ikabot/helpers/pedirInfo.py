@@ -222,8 +222,55 @@ def chooseForeignCity(session):
     city["isOwnCity"] = False
     return city
 
+def chooseEnemyCity(session):
+    """Permite selectarea oricărui oraș de pe insulă, inclusiv cele inactive."""
+    banner()
+    x = read(msg="coordinate x:", digit=True)
+    y = read(msg="coordinate y:", digit=True)
+    print("")
+    url = "view=worldmap_iso&islandX={}&islandY={}&oldBackgroundView=island&islandWorldviewScale=1".format(x, y)
+    html = session.get(url)
+    try:
+        islands_json = re.search(r"jsonData = \'(.*?)\';", html).group(1)
+        islands_json = json.loads(islands_json, strict=False)
+        island_id = islands_json["data"][str(x)][str(y)][0]
+    except Exception:
+        print("Incorrect coordinates")
+        enter()
+        banner()
+        return chooseEnemyCity(session)
+    html = session.get(island_url + island_id)
+    island = getIsland(html)
+
+    i = 0
+    city_options = []
+    for city in island["cities"]:
+        if city["type"] == "city" and city["Name"] != session.username:
+            i += 1
+            num = " " + str(i) if i < 10 else str(i)
+            print(
+                "{: >2}: {: >{max_city_name_length}} ({}) [state: {}]".format(
+                    num,
+                    decodeUnicodeEscape(city["name"]),
+                    decodeUnicodeEscape(city["Name"]),
+                    city.get("state", ""),
+                    max_city_name_length=MAXIMUM_CITY_NAME_LENGTH,
+                )
+            )
+            city_options.append(city)
+    if i == 0:
+        print("There are no cities on this island")
+        enter()
+        return chooseEnemyCity(session)
+    selected_city_index = read(min=1, max=i)
+    city = city_options[selected_city_index - 1]
+    city["islandId"] = island["id"]
+    city["cityName"] = decodeUnicodeEscape(city["name"])
+    city["isOwnCity"] = False
+    return city
 
 def askForValue(text, max_val):
+
     """Displays text and asks the user to enter a value between 0 and max
 
     Parameters
