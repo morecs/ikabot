@@ -225,6 +225,44 @@ def run_workshop_upgrade_interface(session, city_id, position, action_request, e
         event.set()
         return
 
+    # Ask for upgrade levels for each selected task
+    upgrade_levels = {}
+    print("\nHow many levels do you want to upgrade each selected unit?")
+    for idx, task in enumerate(selected_tasks):
+        current_level = int(task['from'])
+        max_levels = 25 - current_level
+        
+        while True:
+            levels_input = read(msg=f"{idx + 1}. {task['unit']} ({task['type']}) - Level {current_level}, Max upgradeable: {max_levels} levels: ").strip()
+            try:
+                levels = int(levels_input)
+                if 1 <= levels <= max_levels:
+                    upgrade_levels[idx] = levels
+                    break
+                else:
+                    print(f"Please enter a number between 1 and {max_levels}.")
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+    
+    # Expand tasks based on selected levels
+    expanded_tasks = []
+    for idx, task in enumerate(selected_tasks):
+        levels = upgrade_levels.get(idx, 1)
+        current_level = int(task['from'])
+        current_effect = int(task['effect_from'])
+        
+        for level_num in range(levels):
+            target_level = current_level + level_num + 1
+            target_effect = current_effect + (int(task['effect_to']) - int(task['effect_from'])) * (level_num + 1) // levels
+            
+            expanded_task = task.copy()
+            expanded_task['to'] = target_level
+            expanded_task['effect_to'] = target_effect
+            expanded_task['current_level'] = current_level + level_num
+            expanded_tasks.append(expanded_task)
+    
+    selected_tasks = expanded_tasks
+
     total_gold = 0
     total_crystal = 0
     for task in selected_tasks:
@@ -234,7 +272,7 @@ def run_workshop_upgrade_interface(session, city_id, position, action_request, e
         except Exception:
             pass
 
-    print("\nTotal estimated cost:")
+    print("\nTotal estimated cost for first level upgrades:")
     print(f" - Gold: {total_gold:,} gold")
     print(f" - Crystal: {total_crystal:,} crystal")
 
