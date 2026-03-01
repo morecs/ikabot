@@ -114,7 +114,10 @@ def execute_sequential_upgrades(session, city_id, position, tab, tasks):
         action_request = getActionRequestFromHTML(html)
 
         task = tasks.pop(0)
-        session.setStatus(f"Upgrading {task['unit']} ({task['type']}) to level {task['to']}")
+        # display both current and target level when available
+        from_lvl = task.get('from', '?')
+        to_lvl = task.get('to', '?')
+        session.setStatus(f"Upgrading {task['unit']} ({task['type']}) {from_lvl}→{to_lvl}")
         success, error = send_upgrade_request(session, city_id, position, task['unitId'], task['upgradeType'], action_request, tab)
         if not success:
             # If the failure is because of insufficient resources, stop and notify via Telegram bot.
@@ -225,13 +228,14 @@ def run_workshop_upgrade_interface(session, city_id, position, action_request, e
         event.set()
         return
 
-    # Ask for upgrade levels for each selected task
+    # Ask for upgrade levels for each selected task.  We'll collect one value per chosen
+    # entry so that the user can request different counts for armor vs weapon etc.
     upgrade_levels = {}
     print("\nHow many levels do you want to upgrade each selected unit?")
     for idx, task in enumerate(selected_tasks):
         current_level = int(task['from'])
         max_levels = 25 - current_level
-        
+
         while True:
             levels_input = read(msg=f"{idx + 1}. {task['unit']} ({task['type']}) - Level {current_level}, Max upgradeable: {max_levels} levels: ").strip()
             try:
@@ -243,36 +247,55 @@ def run_workshop_upgrade_interface(session, city_id, position, action_request, e
                     print(f"Please enter a number between 1 and {max_levels}.")
             except ValueError:
                 print("Invalid input. Please enter a number.")
-    
-    # Expand tasks based on selected levels
-    expanded_tasks = []
-    for idx, task in enumerate(selected_tasks):
-        levels = upgrade_levels.get(idx, 1)
-        current_level = int(task['from'])
-        current_effect = int(task['effect_from'])
-        
-        for level_num in range(levels):
-            target_level = current_level + level_num + 1
-            target_effect = current_effect + (int(task['effect_to']) - int(task['effect_from'])) * (level_num + 1) // levels
-            
-            expanded_task = task.copy()
-            expanded_task['to'] = target_level
-            expanded_task['effect_to'] = target_effect
-            expanded_task['current_level'] = current_level + level_num
-            expanded_tasks.append(expanded_task)
-    
-    selected_tasks = expanded_tasks
 
+    # build a flat queue of individual upgrade tasks; this avoids the confusing
+    # "expanded_tasks" calculation previously used and guarantees that each
+    # choice is upgraded the correct number of times without accidentally
+    # combining levels for the first selection only.
+    queued_tasks = []
+    # accumulate cost using the base cost from each level and multiply by
+    # requested levels so the totals reflect all of the work being queued.
     total_gold = 0
     total_crystal = 0
-    for task in selected_tasks:
-        try:
-            total_gold += int(task['gold'].replace(',', '').replace('.', ''))
-            total_crystal += int(task['crystal'].replace(',', '').replace('.', ''))
-        except Exception:
-            pass
 
-    print("\nTotal estimated cost for first level upgrades:")
+    for idx, base_task in enumerate(selected_tasks):
+        levels = upgrade_levels.get(idx, 1)
+        # base cost strings might contain commas or dots; parse safely
+        try:
+            cost_gold = int(base_task['gold'].replace(',', '').replace('.', ''))
+        except Exception:
+            cost_gold = 0
+        try:
+            cost_crystal = int(base_task['crystal'].replace(',', '').replace('.', ''))
+        except Exception:
+            cost_crystal = 0
+
+        total_gold += cost_gold * levels
+        total_crystal += cost_crystal * levels
+
+        # each individual level upgrade is represented by a copy of the base
+        # task with its level fields adjusted so the status messages remain
+        # meaningful.
+        current_level = int(base_task['from'])
+        effect_step = int(base_task.get('effect_to', 0)) - int(base_task.get('effect_from', 0))
+        for n in range(levels):
+            new_task = base_task.copy()
+            new_task['from'] = str(current_level + n)
+            new_task['to'] = str(current_level + n + 1)
+            new_task['effect_from'] = str(int(base_task.get('effect_from', 0)) + effect_step * n)
+            new_task['effect_to'] = str(int(base_task.get('effect_from', 0)) + effect_step * (n + 1))
+            queued_tasks.append(new_task)
+
+    # replace the selected_tasks list with the fully expanded queue
+    selected_tasks = queued_tasks
+
+    # show the user exactly what will be queued so they can catch any
+    # mis-ordering or duplicate entries before we launch the background thread
+    print("\nThe following individual upgrades will be queued:")
+    for i, t in enumerate(selected_tasks, start=1):
+        print(f" [{i}] {t['unit']} ({t['type']}) {t.get('from','?')} -> {t.get('to','?')}")
+
+    print("\nTotal estimated cost for all requested upgrades:")
     print(f" - Gold: {total_gold:,} gold")
     print(f" - Crystal: {total_crystal:,} crystal")
 
