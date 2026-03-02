@@ -16,6 +16,7 @@ from ikabot.function.alertAttacks import alertAttacks
 from ikabot.function.alertLowWine import alertLowWine
 from ikabot.function.attackBarbarians import attackBarbarians
 from ikabot.function.autoBarbarians import autoBarbarians
+from ikabot.function.AutoFarmInactive import AutoFarmInactive
 from ikabot.function.autoPirate import autoPirate
 from ikabot.function.buyResources import buyResources
 from ikabot.function.checkForUpdate import checkForUpdate
@@ -56,7 +57,6 @@ from ikabot.web.session import *
 from ikabot.function.UpgradeUnits import UpgradeUnits
 from ikabot.function.modifyProduction import modifyProduction
 from ikabot.function.developer import developer
-
 from ikabot.function.UpgradeUnits import UpgradeUnits
 
 def menu(session, checkUpdate=True):
@@ -160,6 +160,7 @@ def menu(session, checkUpdate=True):
         18: investigate,
         1901: attackBarbarians,
         1902: autoBarbarians,
+        1903: AutoFarmInactive,
         2001: searchForIslandSpaces,
         2002: dumpWorld,
         2101: proxyConf,
@@ -196,7 +197,7 @@ def menu(session, checkUpdate=True):
     print("(16) Ikabot Web Server")
     print("(17) Auto-Pirate")
     print("(18) Investigate")
-    print("(19) Attack / Grind barbarians")
+    print("(19) Attack / Grind barbarians / Auto farm inactive")
     print("(20) Dump / Monitor world")
     print("(21) Options / Settings")
     print("(22) Consolidate resources")
@@ -253,7 +254,8 @@ def menu(session, checkUpdate=True):
         print("(0) Back")
         print("(1) Simple Attack")
         print("(2) Auto Grind")
-        selected = read(min=0, max=2, digit=True)
+        print("(3) Auto farm inactive")
+        selected = read(min=0, max=3, digit=True)
         if selected == 0:
             menu(session)
             return
