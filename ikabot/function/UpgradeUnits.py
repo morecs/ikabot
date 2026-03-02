@@ -135,26 +135,79 @@ def execute_sequential_upgrades(session, city_id, position, tab, tasks):
     session.setStatus("All workshop upgrades completed")
 
 def UpgradeUnits(session, event, stdin_fd, predetermined_input):
+    # The original implementation only handled the first city containing a
+    # workshop.  It now collects *all* cities with workshops and allows the
+    # user to select one, several, or 'all' of them.  Each chosen city will
+    # spawn its own background thread for the actual upgrade sequence, so
+    # upgrades can proceed in parallel across multiple cities while the user
+    # continues interacting with the bot.
     sys.stdin = os.fdopen(stdin_fd)
     config.predetermined_input = predetermined_input
 
-    cities_ids, _ = getIdsOfCities(session)
+    cities_ids, cities_info = getIdsOfCities(session)
 
+    # gather all cities that contain a workshop
+    workshops = []
     for city_id in cities_ids:
         html = session.get(city_url + str(city_id))
         action_request = getActionRequestFromHTML(html)
         city_data = getCity(html)
+        for building in city_data.get("position", []):
+            if building.get("building") == "workshop":
+                workshops.append({
+                    "city_id": city_id,
+                    "position": building.get("position"),
+                    "level": building.get("level", 0),
+                    "action_request": action_request,
+                    "name": cities_info.get(city_id, cities_info.get(str(city_id), {})).get("name", str(city_id)),
+                })
+                break
 
-        for building in city_data["position"]:
-            if building["building"] == "workshop":
-                position = building["position"]
-                run_workshop_upgrade_interface(session, city_id, position, action_request, event)
-                return
+    if not workshops:
+        print("\nNo workshop found in any city.")
+        enter()
+        event.set()
+        return
 
-    enter()
-    event.set()
+    # if more than one workshop, ask the user which cities to operate on
+    selected_workshops = workshops
+    if len(workshops) > 1:
+        print("\nCities with a workshop:")
+        for idx, w in enumerate(workshops, start=1):
+            lvl = w.get("level", 0)
+            print(f"[{idx}] {w['name']} (id {w['city_id']}), workshop level {lvl}")
+        print("\nEnter numbers separated by space (e.g. 1 3) or 'all' to pick every city:")
+        sel = read().split()
+        if "all" in sel:
+            selected_workshops = workshops
+        else:
+            selected_workshops = []
+            for token in sel:
+                if token.isdigit():
+                    i = int(token)
+                    if 0 < i <= len(workshops):
+                        selected_workshops.append(workshops[i - 1])
+        if not selected_workshops:
+            enter()
+            event.set()
+            return
 
-def run_workshop_upgrade_interface(session, city_id, position, action_request, event):
+    # run interface for each chosen city; only set the event after the last one
+    for idx, w in enumerate(selected_workshops):
+        # make it clear to the user which city we're working on
+        print(f"\n=== City {w['name']} (id {w['city_id']}) ===")
+        finalize = idx == len(selected_workshops) - 1
+        run_workshop_upgrade_interface(
+            session,
+            w["city_id"],
+            w["position"],
+            w["action_request"],
+            event,
+            finalize,
+            w.get("level", 0),
+        )
+
+def run_workshop_upgrade_interface(session, city_id, position, action_request, event, finalize=True, workshop_level=0):
     print("\nWhat would you like to upgrade?")
     print("[1] Units")
     print("[2] Ships")
@@ -169,19 +222,24 @@ def run_workshop_upgrade_interface(session, city_id, position, action_request, e
     filter_type = "tabUnits" if choice == 1 else "tabShips"
     label = "units" if choice == 1 else "ships"
 
+    # report workshop level to user; will be used when limiting upgrades
+    print(f"Workshop level: {workshop_level}")
+
     response = getWorkshopTab(session, city_id, position, action_request, filter_type)
 
     try:
         data = json.loads(response, strict=False)
     except Exception as e:
         enter()
-        event.set()
+        if finalize:
+            event.set()
         return
 
     template_data = next((b[1] for b in data if isinstance(b, list) and b[0] == "updateTemplateData"), None)
     if not template_data:
         enter()
-        event.set()
+        if finalize:
+            event.set()
         return
 
     complete_data = template_data.get("completeData", {})
@@ -197,10 +255,16 @@ def run_workshop_upgrade_interface(session, city_id, position, action_request, e
 
             cur = upgrade.get("currentLevel", {})
             nxt = upgrade.get("nextLevel", {})
+            current_level = int(cur.get("upgradeLevel", 0))
+            # the templated data may include upgrades regardless of workshop
+            # level; skip anything we can't start due to a low workshop.
+            if workshop_level <= current_level:
+                continue
+
             tasks.append({
                 "unit": unit_name,
                 "type": upgrade.get("upgradeTypeDesc", ""),
-                "from": int(cur.get("upgradeLevel", 0)),
+                "from": current_level,
                 "to": int(nxt.get("upgradeLevel", 0)),
                 "effect_from": int(cur.get("upgradeEffect", 0)),
                 "effect_to": int(nxt.get("upgradeEffect", 0)),
@@ -212,8 +276,10 @@ def run_workshop_upgrade_interface(session, city_id, position, action_request, e
             })
 
     if not tasks:
+        print("\nNo upgrade options available in this city (workshop level may be too low).")
         enter()
-        event.set()
+        if finalize:
+            event.set()
         return
 
     for idx, task in enumerate(tasks, start=1):
@@ -225,7 +291,8 @@ def run_workshop_upgrade_interface(session, city_id, position, action_request, e
 
     if not selected_tasks:
         enter()
-        event.set()
+        if finalize:
+            event.set()
         return
 
     # Ask for upgrade levels for each selected task.  We'll collect one value per chosen
@@ -234,7 +301,12 @@ def run_workshop_upgrade_interface(session, city_id, position, action_request, e
     print("\nHow many levels do you want to upgrade each selected unit?")
     for idx, task in enumerate(selected_tasks):
         current_level = int(task['from'])
-        max_levels = 25 - current_level
+        # workshop_level is guaranteed to be > current_level for all tasks here
+        max_levels = min(25 - current_level, workshop_level - current_level)
+        if max_levels <= 0:
+            # should not happen because of earlier filtering, but just in case
+            print(f"Cannot upgrade {task['unit']} ({task['type']}) - workshop too low.")
+            continue
 
         while True:
             levels_input = read(msg=f"{idx + 1}. {task['unit']} ({task['type']}) - Level {current_level}, Max upgradeable: {max_levels} levels: ").strip()
@@ -303,7 +375,8 @@ def run_workshop_upgrade_interface(session, city_id, position, action_request, e
     if confirm != 'y':
         print("Operation cancelled by user.")
         enter()
-        event.set()
+        if finalize:
+            event.set()
         return
     session.setStatus(f"Queued {len(selected_tasks)} upgrades | Gold: {total_gold:,} | Crystal: {total_crystal:,}")
     info = f"Workshop upgrade: {len(selected_tasks)} upgrades queued"
@@ -311,4 +384,5 @@ def run_workshop_upgrade_interface(session, city_id, position, action_request, e
     setInfoSignal(session, info)
     thread = threading.Thread(target=execute_sequential_upgrades, args=(session, city_id, position, filter_type, selected_tasks))
     thread.start()
-    event.set()
+    if finalize:
+        event.set()
