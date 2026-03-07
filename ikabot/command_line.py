@@ -59,6 +59,21 @@ from ikabot.function.modifyProduction import modifyProduction
 from ikabot.function.developer import developer
 from ikabot.function.UpgradeUnits import UpgradeUnits
 
+def production_or_wine(session, event, stdin_fd, predetermined_input):
+    """Menu dispatcher for Production and Wine settings"""
+    from ikabot.helpers.gui import banner
+    banner()
+    print("(0) Back")
+    print("(1) Set Production of Saw mill / Luxury good")
+    print("(2) Set wine consumption in taverns")
+    choice = read(min=0, max=2, digit=True)
+    if choice == 0:
+        return
+    elif choice == 1:
+        modifyProduction(session, event, stdin_fd, predetermined_input)
+    elif choice == 2:
+        modifyWineConsumption(session, event, stdin_fd, predetermined_input)
+
 def menu(session, checkUpdate=True):
     """
     Parameters
@@ -119,20 +134,6 @@ def menu(session, checkUpdate=True):
             for r in process_list
         ]
         print("")
-
-    def production_or_wine(session, event, stdin_fd, predetermined_input):
-        from ikabot.helpers.gui import banner
-        banner()
-        print("(0) Back")
-        print("(1) Set Production of Saw mill / Luxury good")
-        print("(2) Set wine consumption in taverns")
-        choice = read(min=0, max=2, digit=True)
-        if choice == 0:
-            return
-        elif choice == 1:
-            modifyProduction(session, event, stdin_fd, predetermined_input)
-        elif choice == 2:
-            modifyWineConsumption(session, event, stdin_fd, predetermined_input)
 
     menu_actions = {
         1: constructionList,
