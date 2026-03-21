@@ -7,12 +7,16 @@ import os
 import sys
 import time
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from ikabot.config import *
 from ikabot.function.activateMiracle import activateMiracle
 from ikabot.function.alertAttacks import alertAttacks
 from ikabot.function.alertLowWine import alertLowWine
 from ikabot.function.attackBarbarians import attackBarbarians
 from ikabot.function.autoBarbarians import autoBarbarians
+from ikabot.function.AutoFarmInactive import AutoFarmInactive
 from ikabot.function.autoPirate import autoPirate
 from ikabot.function.buyResources import buyResources
 from ikabot.function.checkForUpdate import checkForUpdate
@@ -46,11 +50,29 @@ from ikabot.function.activateShrine import activateShrine
 from ikabot.helpers.botComm import telegramDataIsValid, updateTelegramData
 from ikabot.helpers.gui import *
 from ikabot.helpers.pedirInfo import read
+from ikabot.function.modifyProduction import modifyProduction
+from ikabot.function.modifyWineConsumption import modifyWineConsumption
 from ikabot.helpers.process import updateProcessList
 from ikabot.web.session import *
 from ikabot.function.UpgradeUnits import UpgradeUnits
 from ikabot.function.modifyProduction import modifyProduction
+from ikabot.function.developer import developer
 from ikabot.function.UpgradeUnits import UpgradeUnits
+
+def production_or_wine(session, event, stdin_fd, predetermined_input):
+    """Menu dispatcher for Production and Wine settings"""
+    from ikabot.helpers.gui import banner
+    banner()
+    print("(0) Back")
+    print("(1) Set Production of Saw mill / Luxury good")
+    print("(2) Set wine consumption in taverns")
+    choice = read(min=0, max=2, digit=True)
+    if choice == 0:
+        return
+    elif choice == 1:
+        modifyProduction(session, event, stdin_fd, predetermined_input)
+    elif choice == 2:
+        modifyWineConsumption(session, event, stdin_fd, predetermined_input)
 
 def menu(session, checkUpdate=True):
     """
@@ -139,6 +161,7 @@ def menu(session, checkUpdate=True):
         18: investigate,
         1901: attackBarbarians,
         1902: autoBarbarians,
+        1903: AutoFarmInactive,
         2001: searchForIslandSpaces,
         2002: dumpWorld,
         2101: proxyConf,
@@ -149,8 +172,11 @@ def menu(session, checkUpdate=True):
         2106: testTelegramBot,
         2107: importExportCookie,
         2108: loadCustomModule,
+        2109: developer,
         22: consolidateResources,
-        23: modifyProduction
+        23: production_or_wine,
+        2301: modifyProduction,
+        2302: modifyWineConsumption
     }
 
     print("(0)  Exit")
@@ -172,11 +198,11 @@ def menu(session, checkUpdate=True):
     print("(16) Ikabot Web Server")
     print("(17) Auto-Pirate")
     print("(18) Investigate")
-    print("(19) Attack / Grind barbarians")
+    print("(19) Attack / Grind barbarians / Auto farm inactive")
     print("(20) Dump / Monitor world")
     print("(21) Options / Settings")
     print("(22) Consolidate resources")
-    print("(23) Set Production of Saw mill / Luxury good")
+    print("(23) Set Production / Wine consumption")
 
     total_options = len(menu_actions) + 1
     selected = read(min=0, max=total_options, digit=True, empty=True)
@@ -229,7 +255,8 @@ def menu(session, checkUpdate=True):
         print("(0) Back")
         print("(1) Simple Attack")
         print("(2) Auto Grind")
-        selected = read(min=0, max=2, digit=True)
+        print("(3) Auto farm inactive")
+        selected = read(min=0, max=3, digit=True)
         if selected == 0:
             menu(session)
             return
@@ -275,8 +302,9 @@ def menu(session, checkUpdate=True):
         print("(6) Message Telegram Bot")
         print("(7) Import / Export cookie")
         print("(8) Load custom ikabot module")
+        print("(9) Developer Data")
 
-        selected = read(min=0, max=8, digit=True)
+        selected = read(min=0, max=9, digit=True)
         if selected == 0:
             menu(session)
             return
