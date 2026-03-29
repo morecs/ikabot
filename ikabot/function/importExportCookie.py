@@ -136,7 +136,7 @@ def exportCookie(session):
     session.get()  # get valid cookie in case user has logged the bot out before running this feature
     ikariam = session.getSessionData()["cookies"]["ikariam"]
     print(
-        "Use this cookie to synchronise two ikabot instances on 2 different machines\n\n"
+        "Use this cookie to synchronise two ikabot instances on 2 different machines,\nor to play in the browser without logging ikabot out.\n\n"
     )
     print("ikariam=" + ikariam + "\n\n")
 
@@ -147,11 +147,11 @@ def exportCookie(session):
         cookie
     )
     print(
-        """To prevent ikabot from logging you out while playing Ikariam do the following:
-    1. Be on the "Your session has expired" screen
+        f"""To prevent ikabot from logging you out while playing Ikariam do the following:
+    1. Open this link: https://{session.host}/robots.txt
     2. Open Chrome javascript console by pressing CTRL + SHIFT + J
-    3. Copy the text below, paste it into the console and press enter
-    4. Press F5
+    3. Copy the javascript code below, paste it into the console and press enter
+    4. Open this link: https://{session.host}
     """
     )
     print(cookies_js)
