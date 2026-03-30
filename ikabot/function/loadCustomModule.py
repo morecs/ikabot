@@ -17,63 +17,102 @@ def loadCustomModule(session, event, stdin_fd, predetermined_input):
     stdin_fd: int
     predetermined_input : multiprocessing.managers.SyncManager.list
     """
-    # FIX GLOBAL FOR LINUX:
-    # In Linux, sys.stdin is often closed in threads.
-    # We reopen the terminal directly so that read() always works.
+    # Fix for Linux: Reopen stdin to ensure terminal interaction works in threads
     if sys.platform != "win32":
         try:
             sys.stdin = open('/dev/tty', 'r')
         except Exception:
-            # If there is no tty (e.g., Docker), we try to use the passed fd
             sys.stdin = os.fdopen(stdin_fd)
     else:
         sys.stdin = os.fdopen(stdin_fd)
 
     config.predetermined_input = predetermined_input
-    try:
-        banner()
-        sessionData = session.getSessionData()
-        modules = [path for path in sessionData.get('shared', {}).get('customModules', []) if os.path.exists(path)]
-        print("0) Back")
-        print("1) Add new module")
-        for module in modules:
-            print(str(modules.index(module) + 2) + ") " + module)
-
-        choice = read(min = 0, max = len(modules) + 1, digit = True)
-        if choice == 0:
-            event.set()
-            return
-        elif choice == 1:
+    
+    while True:
+        try:
             banner()
-            print(f'        {bcolors.WARNING}[WARNING]{bcolors.ENDC} Running third party code can be dangerous.')
-            print('Enter the full path to the module you wish to load. The module must have a function with the same name as the file.')
-            print('Enter full path: ')
-            path = read().strip().replace('\\', '/')
-            if not path.endswith('.py'):
-                print('The file must be a .py file!')
-                enter()
+            sessionData = session.getSessionData()
+            shared_data = sessionData.get('shared', {})
+            
+            # Load only files that actually exist on the system
+            modules = [path for path in shared_data.get('customModules', []) if os.path.exists(path)]
+            
+            print("0) Back")
+            print("1) Add new module")
+            print("2) Remove a module")
+            
+            # List custom modules starting from index 3
+            for i, module in enumerate(modules):
+                print(f"{i + 3}) {module}")
+
+            choice = read(min=0, max=len(modules) + 2, digit=True)
+
+            if choice == 0:
                 event.set()
                 return
-            
-            modules.append(path)
-            sessionData = session.getSessionData()
-            sessionData['shared'] = sessionData.get('shared', {})
-            sessionData['shared']['customModules'] = modules
-            session.setSessionData(sessionData, shared = True)
-        else:
-            path = modules[choice - 2]
 
-        name = os.path.basename(path).replace('.py', '')
+            elif choice == 1:
+                banner()
+                print(f'        {bcolors.WARNING}[WARNING]{bcolors.ENDC} Running third party code can be dangerous.')
+                print('Enter the full path to the .py module:')
+                path = read().strip().replace('\\', '/')
+                
+                if not path.endswith('.py'):
+                    print('Error: The file must be a .py file!')
+                    enter()
+                    continue
+                
+                if path not in modules:
+                    modules.append(path)
+                    shared_data['customModules'] = modules
+                    # Persist changes to session file
+                    session.setSessionData(shared_data, shared=True)
+                    print("\nModule added successfully.")
+                    enter()
+                continue
 
-        # Load module
-        module = SourceFileLoader(name, path).load_module()
+            elif choice == 2:
+                banner()
+                if not modules:
+                    print("No modules available to remove.")
+                    enter()
+                    continue
+                
+                print("Select the module to remove:")
+                for i, m in enumerate(modules):
+                    print(f"{i}) {m}")
+                
+                del_choice = read(min=0, max=len(modules) - 1, digit=True)
+                removed = modules.pop(del_choice)
+                
+                shared_data['customModules'] = modules
+                # Persist deletion to session file
+                session.setSessionData(shared_data, shared=True)
+                
+                print(f"\nModule {os.path.basename(removed)} removed.")
+                enter()
+                continue
 
-        # Run module
-        print('Running module...\n')
-        getattr(module, name)(session, event, stdin_fd, predetermined_input)
+            else:
+                # Execution logic
+                path = modules[choice - 3]
+                name = os.path.basename(path).replace('.py', '')
+                
+                banner()
+                print(f'Running module: {name}...\n')
+                
+                # Dynamic module loading
+                module = SourceFileLoader(name, path).load_module()
+                
+                # Execute the function (must match filename)
+                getattr(module, name)(session, event, stdin_fd, predetermined_input)
+                
+                event.set()
+                return
 
-    except Exception:
-        print('\n>> Error while running custom module:')
-        traceback.print_exc()
-        enter()
-        event.set()
+        except Exception:
+            print('\n>> Error in Custom Module Manager:')
+            traceback.print_exc()
+            enter()
+            event.set()
+            break
