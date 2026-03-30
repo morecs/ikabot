@@ -17,6 +17,11 @@ from ikabot.helpers.process import run, set_child_mode
 from ikabot.helpers.varios import timeStringToSec, wait
 from ikabot.helpers.apiComm import getPiratesCaptchaSolution
 
+try:
+    from ikabot.helpers.piratesDecaptcha import get_captcha_string
+    LOCAL_DECAPTCHA = True
+except Exception:
+    LOCAL_DECAPTCHA = False
 
 
 def autoPirate(session, event, stdin_fd, predetermined_input):
@@ -33,11 +38,13 @@ def autoPirate(session, event, stdin_fd, predetermined_input):
     banner()
     try:        
 
-        print(
-            "{}⚠️ USING THIS FEATURE WILL EXPOSE YOUR IP ADDRESS TO A THIRD PARTY FOR CAPTCHA SOLVING ⚠️{}\n\n".format(
-                bcolors.WARNING, bcolors.ENDC
-            )
-        )
+        if not LOCAL_DECAPTCHA:
+            print("💡 TIP: You can process captchas locally! Run `pip install onnxruntime` to move inference to your client.")
+            print("This feature is not available if you are using the precombile binary for Windows!\n\n")
+            print("{}⚠️ USING THIS FEATURE WILL EXPOSE YOUR IP ADDRESS TO A THIRD PARTY FOR CAPTCHA SOLVING ⚠️{}\n\n".format(bcolors.WARNING, bcolors.ENDC))
+        else:
+            print("{}[SUCCESS]{} You are using local decaptcha!\n\n".format(bcolors.GREEN, bcolors.ENDC))
+    
         print("How many pirate missions should I do? (min = 1)")
         pirateCount = read(min=1, digit=True)
         print("Should I schedule pirate missions by the time of day? (y/N)")
@@ -271,8 +278,9 @@ def resolveCaptcha(session, picture):
         "decaptcha" not in session_data
         or session_data["decaptcha"]["name"] == "default"
     ):
-        captcha = getPiratesCaptchaSolution(session, picture)
-        return captcha
+        if LOCAL_DECAPTCHA:
+            return get_captcha_string(picture)
+        return getPiratesCaptchaSolution(session, picture)
     elif session_data["decaptcha"]["name"] == "custom":
         files = {"upload_file": picture}
         captcha = requests.post(
