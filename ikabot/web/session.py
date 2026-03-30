@@ -25,7 +25,8 @@ from ikabot.helpers.getJson import getCity
 from ikabot.helpers.gui import banner
 from ikabot.helpers.pedirInfo import read
 from ikabot.helpers.varios import getDateTime, lastloginTimetoString
-from ikabot.helpers.apiComm import getInteractiveCaptchaSolution, getNewBlackBoxToken
+from ikabot.helpers.apiComm import getNewBlackBoxToken
+from ikabot.helpers.lobbyDecaptcha import break_interactive_captcha
 
 
 class Session:
@@ -514,14 +515,8 @@ class Session:
                     ).content
                     data = {}
                     try:
-                        captcha = str(getInteractiveCaptchaSolution(self, text_image, drag_icons))
-                        if not captcha.isnumeric():
-                            raise Exception(
-                                "Failed to resolve interactive captcha automatically. Server returned bad data: {}".format(
-                                    captcha
-                                )
-                            )
-                        data = {"answer": int(captcha)}
+                        captcha = break_interactive_captcha(text_image, drag_icons)
+                        data = {"answer": captcha}
                     except Exception as e:
                         print(
                             "The interactive captcha has been presented. Automatic captcha resolution failed because: {}".format(
