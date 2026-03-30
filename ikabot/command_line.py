@@ -53,6 +53,7 @@ from ikabot.helpers.process import updateProcessList
 from ikabot.web.session import *
 from ikabot.function.UpgradeUnits import UpgradeUnits
 from ikabot.function.modifyProduction import modifyProduction
+from ikabot.function.UpgradeUnits import UpgradeUnits
 from ikabot.function.developer import developer
 
 
