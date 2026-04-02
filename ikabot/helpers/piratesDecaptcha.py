@@ -20,7 +20,7 @@ response = requests.get(url, timeout=30)
 response.raise_for_status()
 model_bytes = response.content
 
-session = InferenceSession(onnx_model)
+session = InferenceSession(model_bytes)
 
 CLASSES =[
     "B", "2", "D", "X", "5", "M", "W", "A", "7", "4",
