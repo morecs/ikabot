@@ -13,14 +13,50 @@ except:                                                           # or onnxrunti
         print('ERROR: COULD NOT FIND ONNXRUNTIME INFERENCE SESSION!')
         raise
 
+if os.name == 'nt':
+    _temp = os.getenv('temp') or os.getenv('TMP') or os.getenv('TEMP') or '.'
+    _model_cache_path = _temp + '/ikabot_pirates_model.onnx'
+else:
+    _model_cache_path = '/tmp/ikabot_pirates_model.onnx'
 
-url = "https://github.com/Ikabot-Collective/IkabotAPI/raw/main/apps/decaptcha/pirates_captcha/yolov8n-ikariam-pirates-mAP-0_989.onnx"
-print('Downloading .onnx model, please wait...')
-response = requests.get(url, timeout=30)
-response.raise_for_status()
-model_bytes = response.content
+_url = 'https://github.com/Ikabot-Collective/IkabotAPI/raw/main/apps/decaptcha/pirates_captcha/yolov8n-ikariam-pirates-mAP-0_989.onnx'
+session = None
 
-session = InferenceSession(model_bytes)
+
+def _load_model():
+    global session
+    if session is not None:
+        return session
+
+    model_bytes = None
+
+    try:
+        if os.path.isfile(_model_cache_path):
+            with open(_model_cache_path, 'rb') as f:
+                model_bytes = f.read()
+    except Exception:
+        model_bytes = None
+
+    if model_bytes is None:
+        try:
+            print('Downloading .onnx model, please wait...')
+            resp = requests.get(_url, timeout=30)
+            resp.raise_for_status()
+            model_bytes = resp.content
+            try:
+                with open(_model_cache_path, 'wb') as f:
+                    f.write(model_bytes)
+            except Exception:
+                pass
+        except Exception:
+            model_bytes = None
+
+    if model_bytes is None:
+        raise RuntimeError('Failed to load or download the ONNX model')
+
+    session = InferenceSession(model_bytes)
+    return session
+
 
 CLASSES =[
     "B", "2", "D", "X", "5", "M", "W", "A", "7", "4",
@@ -233,8 +269,9 @@ def break_ikariam_pirate_captcha(image_bytes):
     blob = [[r_2d, g_2d, b_2d]]
 
     # Run inference
-    input_name = session.get_inputs()[0].name
-    raw = session.run(None, {input_name: blob})[0]
+    sess = _load_model()
+    input_name = sess.get_inputs()[0].name
+    raw = sess.run(None, {input_name: blob})[0]
 
     # Transpose raw[0] from (4+classes, anchors) to (anchors, 4+classes)
     output = list(zip(*raw[0]))
