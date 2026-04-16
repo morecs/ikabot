@@ -8,6 +8,8 @@ import sys
 import time
 
 from dotenv import load_dotenv
+
+
 load_dotenv()
 
 from ikabot.config import *
@@ -55,6 +57,7 @@ from ikabot.function.UpgradeUnits import UpgradeUnits
 from ikabot.function.modifyProduction import modifyProduction
 from ikabot.function.UpgradeUnits import UpgradeUnits
 from ikabot.function.developer import developer
+from ikabot.function.AutoFarmInactive import AutoFarmInactive
 
 
 def menu(session, checkUpdate=True):
@@ -144,6 +147,7 @@ def menu(session, checkUpdate=True):
         18: research,
         1901: attackBarbarians,
         1902: autoBarbarians,
+        1903: AutoFarmInactive,
         2001: searchForIslandSpaces,
         2002: dumpWorld,
         2101: proxyConf,
