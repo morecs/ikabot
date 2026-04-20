@@ -20,7 +20,7 @@ from ikabot.helpers.planRoutes import waitForArrival
 from ikabot.helpers.process import set_child_mode, updateProcessList
 from ikabot.helpers.signals import setInfoSignal
 from ikabot.helpers.varios import *
-from ikabot.helpers.pedirInfo import chooseEnemyCity
+from ikabot.helpers.pedirInfo import chooseEnemyCity, getShipCapacity
 from ikabot.web.session import Session
 from ikabot.function.attackBarbarians import (
     get_units,
@@ -33,7 +33,17 @@ from ikabot.function.attackBarbarians import (
 )
 from ikabot.function.alertLowWine import getMovementsFromHtml
 
-# Unit upkeep costs
+# Normalize strings with special characters for Telegram/logging
+def safe_encode(text):
+    """Convert text to ASCII-safe string by replacing special characters."""
+    if not isinstance(text, str):
+        return str(text)
+    try:
+        # Try to encode to Latin-1 first
+        return text.encode('ascii', errors='ignore').decode('ascii')
+    except Exception:
+        # Fallback: remove non-ASCII characters
+        return ''.join(c for c in text if ord(c) < 128)
 unit_upkeep = {
     '301': 3,  # Hoplite
     '302': 4,  # Swordsman
@@ -177,7 +187,6 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
         wait_time = read(msg='Wait between attacks (seconds, min 60): ', min=60, max=3600, digit=True)
 
         print('Starting farming operation...')
-    # ...removed debug prints...
 
         set_child_mode(session)
         # notify parent that child setup is complete so PID table gets updated
@@ -210,7 +219,10 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
                 if ships_now < cargo_ships:
                     msg = f'Waiting for transports: need {cargo_ships}, have {ships_now}'
                     print(msg)
-                    sendToBot(session, msg)
+                    try:
+                        sendToBot(session, safe_encode(msg))
+                    except Exception:
+                        pass
                     # waitForArrival will wait until at least one ship is available; loop until we have enough
                     while True:
                         ships_now = waitForArrival(session)
@@ -223,9 +235,8 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
             for idx, plan in enumerate(target_plans, 1):
                 target_city, trips_for_city = plan
                 msg = f'[FARMING] Starting attacks on: {target_city["cityName"]} ({trips_for_city} attacks)'
-                print(msg)
                 try:
-                    sendToBot(session, msg)
+                    sendToBot(session, safe_encode(msg))
                 except Exception:
                     pass
                 # Ensure current city is the selected source before this target's batch
@@ -243,15 +254,15 @@ def AutoFarmInactive(session, event, stdin_fd, predetermined_input):
                 total_farmed += farmed
                 total_attacks += trips_for_city
             final_msg = f'[FARMING DONE] Total: {total_farmed} resources from {total_attacks} attacks'
-            print(final_msg)
+            #print(final_msg)
             try:
-                sendToBot(session, final_msg)
+                sendToBot(session, safe_encode(final_msg))
             except Exception:
                 pass
         except Exception as e:
             # report error to bot
             try:
-                sendToBot(session, f'[ERROR] Farming failed: {str(e)}')
+                sendToBot(session, safe_encode(f'[ERROR] Farming failed: {str(e)}'))
             except Exception:
                 pass
         finally:
@@ -271,112 +282,80 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
 
     def get_last_plundered_resources(session, source_city_id, target_city_id):
         """Extract plundered resources from active fleet movements (loading phase).
-        Uses getMovementsFromHtml to read from live movement data instead of reports."""
-        try:
-            # Get all active movements using the movements view
-            movements = getMovementsFromHtml(session)
+        Uses getMovementsFromHtml to read from live movement data instead of reports.
+        Retries multiple times as movements may temporarily disappear from list."""
 
-            # Look for plunder movements to the target city that are in loading phase
-            target_city_id_str = str(target_city_id)
-            source_city_id_str = str(source_city_id)
+        target_city_id_str = str(target_city_id)
+        source_city_id_str = str(source_city_id)
 
-            for movement in movements:
-                try:
-                    # Check if this is a movement to our target city
+        # Retry up to 4 times with delays as movements may temporarily disappear
+        for attempt in range(4):
+            try:
+                # Get all active movements using the movements view
+                movements = getMovementsFromHtml(session)
+
+                for movement in movements:
                     target = movement.get('target', {})
-                    if str(target.get('cityId', '')) != target_city_id_str:
-                        continue
-
-                    # Check if it's from our source city (plunder movement)
                     origin = movement.get('origin', {})
-                    if str(origin.get('cityId', '')) != source_city_id_str:
+
+                    target_id = str(target.get('cityId', ''))
+                    origin_id = str(origin.get('cityId', ''))
+
+                    if target_id != target_city_id_str or origin_id != source_city_id_str:
                         continue
 
-                    # Extract resources from this movement
                     resources = movement.get('resources', [])
+
                     if not resources:
                         continue
 
-                    # Convert resources list (with cssClass and amount) to dict format
                     plundered = {}
                     resource_mapping = {
                         'resource_icon wood': 'wood',
                         'resource_icon wine': 'wine',
                         'resource_icon marble': 'marble',
-                        'resource_icon crystal': 'crystal',
+                        'resource_icon glass': 'glass',
                         'resource_icon sulfur': 'sulfur',
                     }
 
                     for res in resources:
-                        css_class = res.get('cssClass', '')
-                        amount = res.get('amount', 0)
+                        if isinstance(res, dict):
+                            css_class = res.get('cssClass', '')
+                            amount = res.get('amount', 0)
 
-                        for css, res_name in resource_mapping.items():
-                            if css in css_class:
+                            if css_class in resource_mapping and amount:
+                                res_name = resource_mapping[css_class]
+                                if isinstance(amount, str):
+                                    amount = int(amount.replace(',', ''))
+                                else:
+                                    amount = int(amount)
                                 plundered[res_name] = amount
-                                break
 
                     if plundered and sum(plundered.values()) > 0:
                         return plundered
 
-                except (KeyError, TypeError, ValueError):
-                    continue
+                # If we reach here, movement wasn't found in this attempt
+                #print(f"[DEBUG EXTRACT] No matching movement found, retrying...")
+                if attempt < 3:
+                    time.sleep(2)  # Wait before retry
 
-        except Exception as e:
-            pass
+            except Exception as e:
+                #print(f"[DEBUG EXTRACT] Error during extraction: {e}")
+                if attempt < 3:
+                    time.sleep(2)
 
+        #print(f"[DEBUG EXTRACT] All retries exhausted, returning empty")
         return {}
 
     for trip in range(trips):
         try:
-            # Ensure current city is correct before each trip
+            ships_available = waitForArrival(session)
+
+            total_cargo = cargo_ships * getShipCapacity(session)
+
+            # Ensure current city and get fresh actionRequest token JUST BEFORE sending attack
             _ensure_current_city(session, source_city['id'])
-            # ...existing code for a single trip...
-            # First get the military view to get the action request token
-            # First get the military view which will also give us an action request token
-            military_view_params = {
-                'view': 'militaryAdvisor',
-                'oldView': 'city',
-                'oldBackgroundView': 'city',
-                'backgroundView': 'city',
-                'currentCityId': source_city['id'],
-                'templateView': 'militaryAdvisor',
-                'ajax': 1
-            }
-            military_data = session.post(params=military_view_params)
 
-            # Extract the action request token from the military view
-            html = session.get()
-            action_request_match = re.search(r'actionRequest"\s*:\s*"([a-f0-9]+)"', html)
-            if not action_request_match:
-                action_request_match = re.search(r'actionRequest=([a-f0-9]+)', html)
-            if action_request_match:
-                action_request = action_request_match.group(1)
-                # Switch to the source city
-                session.post(params={
-                    'action': 'headerCity',
-                    'function': 'changeCurrentCity',
-                    'actionRequest': action_request,
-                    'cityId': source_city['id'],
-                    'backgroundView': 'city',
-                    'currentCityId': source_city['id'],
-                    'templateView': 'city',
-                    'ajax': 1
-                })
-
-            # Continue with the military view operations
-            military_view_params = {
-                'view': 'militaryAdvisor',
-                'oldView': 'city',
-                'oldBackgroundView': 'city',
-                'backgroundView': 'city',
-                'currentCityId': source_city['id'],
-                'templateView': 'militaryAdvisor',
-                'ajax': 1
-            }
-            military_data = session.post(params=military_view_params)
-
-            # Ensure we are viewing the source city page to get a valid actionRequest token
             try:
                 city_view_html = session.get(params={
                     'view': 'city',
@@ -385,24 +364,18 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
                     'ajax': 1
                 })
             except Exception:
-                # fallback to a generic GET if the param'd get fails
                 city_view_html = session.get()
 
-            # Extract actionRequest token from the city view HTML
             action_request_match = re.search(r'actionRequest"\s*:\s*"([a-f0-9]+)"', city_view_html)
             if not action_request_match:
                 action_request_match = re.search(r'actionRequest=([a-f0-9]+)', city_view_html)
             if not action_request_match:
-                # final fallback to any page content
                 fallback_html = session.get()
                 action_request_match = re.search(r'actionRequest"\s*:\s*"([a-f0-9]+)"', fallback_html)
                 if not action_request_match:
                     action_request_match = re.search(r'actionRequest=([a-f0-9]+)', fallback_html)
 
-            if action_request_match:
-                action_request = action_request_match.group(1)
-            else:
-                action_request = ''
+            action_request = action_request_match.group(1) if action_request_match else ''
 
             # Prepare the plunder action data (match network request)
             plunder_action = {
@@ -425,10 +398,6 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
                 plunder_action[f'cargo_army_{unit_id}'] = amount
                 plunder_action[f'cargo_army_{unit_id}_upkeep'] = unit_upkeep[unit_id]
 
-            ships_available = waitForArrival(session)
-
-            total_cargo = cargo_ships * getShipCapacity(session)
-
             # Send attack with retry logic
             plunder_result = None
             max_retries = 3
@@ -448,9 +417,9 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
 
             if plunder_result and 'error' in plunder_result:
                 error_msg = f'[ATTACK ERROR] {plunder_result.get("error", "Unknown")}'
-                print(error_msg)
+                #print(error_msg)
                 try:
-                    sendToBot(session, error_msg)
+                    sendToBot(session, safe_encode(error_msg))
                 except Exception:
                     pass
                 continue  # Continue to next trip instead of breaking
@@ -459,10 +428,14 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
 
             # Estimate battle duration by checking the movement with the longest arrival time
             movements = get_movements(session, source_city['id'])
-            attacks = [m for m in movements if m['target']['cityId'] == target_city['id']]
+            attacks = [
+                m for m in movements
+                if str(m['target']['cityId']) == str(target_city['id'])
+                and str(m['origin']['cityId']) == str(source_city['id'])
+            ]
             fighting = filter_fighting(attacks)
             loading = filter_loading(attacks)
-            traveling = filter_traveling(attacks)
+            traveling = filter_traveling(attacks, onlyCanAbort=False)
 
             # Default wait time if no info (fallback)
             estimated_battle_time = 0
@@ -500,19 +473,64 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
                 # Sleep until the estimated finish time plus a small buffer to avoid tight polling
                 time.sleep(estimated_battle_time + 2)
 
-            # After waiting, poll until all movements are done (should be quick)
+            # Wait for fighting to finish (resources will be stolen during fight)
+            # IMPORTANT: Don't use filter_fighting() - use missionState instead
+            # missionState: 2 = "Jefuieste (in curs de desfasurare)" = Plundering in progress
+            found_fighting = False
+            loop_count = 0
             while True:
                 movements = get_movements(session, source_city['id'])
-                attacks = [m for m in movements if m['target']['cityId'] == target_city['id']]
-                fighting = filter_fighting(attacks)
-                loading = filter_loading(attacks)
-                traveling = filter_traveling(attacks)
-                if len(fighting) == 0 and len(loading) == 0 and len(traveling) == 0:
+                loop_count += 1
+
+                # Debug raw movements on first iteration
+                if loop_count == 1:
+                    #print(f"[DEBUG] Raw movements count: {len(movements)}")
+                    for idx, m in enumerate(movements):
+                        orig = m.get('origin', {})
+                        targ = m.get('target', {})
+                        #print(f"[DEBUG] Movement {idx}: origin_cityId={orig.get('cityId')}, target_cityId={targ.get('cityId')}, state={m.get('event', {}).get('state', 'N/A')}")
+                        # Print entire movement structure
+                        #print(f"[DEBUG] Full movement structure:\n{json.dumps(m, indent=2, default=str)}")
+
+                attacks = [
+                    m for m in movements
+                    if str(m['target']['cityId']) == str(target_city['id'])
+                    and str(m['origin']['cityId']) == str(source_city['id'])
+                ]
+
+                #if loop_count == 1:
+                    #print(f"[DEBUG] Matching attacks found: {len(attacks)}")
+                    #print(f"[DEBUG] Looking for: origin={source_city['id']}, target={target_city['id']}")
+
+                # Check missionState 2 = plundering in progress
+                plundering_attacks = [
+                    m for m in attacks
+                    if m.get('event', {}).get('missionState') == 2
+                ]
+
+                if loop_count <= 3:
+                    #print(f"[DEBUG] Loop {loop_count}: Total attacks: {len(attacks)}, Plundering (missionState=2): {len(plundering_attacks)}")
+                    for m in attacks:
+                        mission_state = m.get('event', {}).get('missionState')
+                        resources = m.get('resources', [])
+                        #print(f"[DEBUG] missionState={mission_state}, resources_count={len(resources)}")
+
+                # Mark that we've seen plundering
+                if len(plundering_attacks) > 0:
+                    found_fighting = True
+
+                # Plundering is done when we've SEEN it and it's now gone
+                if found_fighting and len(plundering_attacks) == 0:
+                    #print("[DEBUG] Plundering was seen and now complete, proceeding to resource extraction")
                     break
+
                 time.sleep(3)
 
-            # Wait extra time for military report to update AFTER all movement is complete
-            time.sleep(5)
+            # Now fighting is done, resources are stolen and in loading phase
+            # Wait a bit for loading to actually start
+            time.sleep(2)
+
+            # Extract resources while they are being loaded
             plundered_resources = get_last_plundered_resources(session, source_city['id'], target_city['id'])
             trip_total = sum(plundered_resources.values()) if plundered_resources else 0
             total_farmed += trip_total
@@ -521,7 +539,7 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
             resource_details = ', '.join([f"{res}: {amt}" for res, amt in plundered_resources.items() if amt > 0]) if plundered_resources else 'No resources'
             attack_msg = f"[ATTACK {trip + 1}/{trips}] {target_city['cityName']}: {resource_details} (total: {trip_total})"
             try:
-                sendToBot(session, attack_msg)
+                sendToBot(session, safe_encode(attack_msg))
             except Exception:
                 pass
             # Update status in PID table
@@ -553,9 +571,8 @@ def _do_farming(session, source_city, target_city, attack_units, total_units, ca
                 updateProcessList(session, programprocesslist=[process_entry])
                 time.sleep(wait_seconds)
         except Exception as e:
-            traceback.print_exc()
             try:
-                sendToBot(session, f'[TRIP ERROR {trip + 1}] {str(e)}')
+                sendToBot(session, safe_encode(f'[TRIP ERROR {trip + 1}] {str(e)}'))
             except Exception:
                 pass
             continue  # Continue to next attack instead of breaking
